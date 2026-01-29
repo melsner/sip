@@ -516,12 +516,19 @@ def replace_star_state(fst):
     isyms = fst.fst.input_symbols()
 
     for state, arcs in copied_arcs.items():
+        if state not in mapping:
+            assert(len(arcs) == 0)
+            continue
+
         fst.fst.delete_arcs(state)
 
         for m_src in mapping[state]:
             for arc in arcs:
                 char = isyms.find(arc.ilabel)
-                m_dest = nstate[(char,)]
+                if arc.nextstate == state: #self-loops from non-projected chars in tsl machines
+                    m_dest = m_src
+                else:
+                    m_dest = nstate[(char,)]
                 fst.fst.add_arc(m_src,
                                 pynini.Arc(arc.ilabel,
                                            arc.olabel,
@@ -635,6 +642,7 @@ def make_2isl_transducer(factors, alphabet, minimize:bool=True):
 
     fst.uninteresting_chars = set(alphabet).difference(important_chars)
     fst.state_names = rstate
+    fst.tier = None
 
     if minimize:
         copied_fst = fst.copy()
@@ -681,7 +689,7 @@ def test_fst(fst, string, expected=None):
     acc = pynini.accep(string, token_type=in_sym)
     acc.set_input_symbols(in_sym)
     acc.set_output_symbols(in_sym)
-    
+
     comp = pynini.compose(acc, fst.fst)
     result = normalize_string(comp.string(out_sym), delimiter=" ")
     print(result)
