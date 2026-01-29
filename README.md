@@ -1,33 +1,12 @@
 # SIP
 
-This is the code for the ACL 2024 paper [SIP: Injecting a Structural Inductive Bias into a Seq2Seq Model by Simulation](https://arxiv.org/abs/2310.00796).
+This is the code for the AMP 2025 paper "Sub-regular inductive biases in a phonological transformer", based on the code for the ACL 2024 paper [SIP: Injecting a Structural Inductive Bias into a Seq2Seq Model by Simulation](https://arxiv.org/abs/2310.00796) by Lindemann et al. Our code extends theirs and is a fork of their github repository [namednil/sip](https://github.com/namednil/sip). More documentation is available there. We are very grateful to Matthias Lindemann and his coauthors for distributing their software and providing us with the technical assistance we needed to use it.
 
-## Using SIP without full installation
-If you just want to play with our model and apply it to a downstream task (rather than pre-training/reproducing the exact experiments), then you can use it as follows:
+# Installation
 
-```python
-import transformers, torch
-tokenizer = transformers.AutoTokenizer.from_pretrained("google/byt5-small")
-model = transformers.AutoModelForSeq2SeqLM.from_pretrained("namednil/sip-d4", trust_remote_code=True)
-# (always make sure to check the remote code on Huggingface!)
+Taken from the original SIP repository:
 
-# Construct an optimizer that uses the SIP-finetuning procedure:
-optimizer = model.get_optimizer(torch.optim.Adam, prefix_lr=1.0, lr=3e-4)
-# ... fine-tune the model as usual
-
-# The above code uses a random initialization of the tunable prefix of SIP. 
-# If you don't want that and have more control over the length of the tunable prefix, run:
-
-config = transformers.AutoConfig.from_pretrained("namednil/sip-d4", trust_remote_code=True)
-config.random_selection = False
-config.prefix_length = 50 
-model = transformers.AutoModelForSeq2SeqLM.from_pretrained("namednil/sip-d4", config=config, trust_remote_code=True)
 ```
-
-## Setup
-
-If you want to reproduce our experiments, this will require a full installation. First set up a new environment as follows:
-```shell
 conda create -n sip python=3.10
 conda activate sip
 conda install -c conda-forge pynini # FST library
@@ -44,69 +23,102 @@ cd sip
 pip install -r requirements.txt
 ```
 
-## Reproduction of fine-tuning experiments
+## Creating training data
 
-### Data
-For your convenience, we've included the data for our experiments in `data.zip`. This file has been password protected to avoid unintentional data contamination (password: SIP).
+To create 2ISL training instances: `python -u -m sip.data_gen.gen_isl_pretrain`
+To create 2TSL training instances: `python -u -m sip.data_gen.gen_tsl_pretrain`
 
-If you want to re-generate the synthetic data, you need to run the files `sip/data_gen/gen_in_pretraining_dist.py` and `sip/data_gen/gen_bimachine_eval.py`.
+Those files can be edited to alter the number of items to generate and
+the representation (markov or canonical). The paper uses the
+"canonical" setting, in which the transducers are minimized and TSL
+machines are encoded using self-loops for non-projected
+characters. The "markov" encodings use non-minimal machines in which
+each states is labeled with the previously-seen character.
 
-### Fine-tuning
+To create natural language data: `python -u -m sip.data_gen.create_belth_local_dsets --language [german] --samples [10] --sizes [100,200,300,400]`
 
-Each fine-tuning experiment is described by a configuration file in `configs/finetune`, grouped by the datasets. 
+The datasets will be sampled automatically from the vocabulary files in (github.com/cbelth/PLP) and (github.com/cbelth/Learning-Based-Tiers).
 
-Each configuration file also uses a logger. By default, it will try to log experiments to `neptune.ai` to a specific project.
-If you prefer to log to the standard output, use `"logger": {  f: "TqdmLogger.create"  },` instead. You can also define your own logger in `logger.py`.
+## Pretraining SIP models
 
-The configuration files refer to environment variables for the random seed and data files. For example, to run `SIP-d4` on the first of the length generalization tasks with 4 FST states, you need to run:
-```shell
-export seed="762354"
-export train="data/eval/task_s4_0_length_train.tsv"
-export test="data/eval/task_s4_0_length_test.tsv"
-python config_evaluator.py configs/finetune/synthetic/sip-d4.jsonnet
+All pretraining is handled via jsonnet scripts in the `pretrain_non_hub` directory, e.g. `python -u config_evaluator.py configs/pretrain_non_hub/pretrain_SIP_isl_markov.jsonnet`
+
+## Running experiments
+
+The experiments in section A can be run using: `python -u -m sip.data_gen.run_harmony_experiment --process [1] --model [local_isl] --fst_format [isl_canon] --cipher_type [monoalphabetic] --cipher_key [2]`
+
+* Process: 1 through 5. See code; the table in the paper is reordered from the numbers in the actual code file.
+* Model and format: defined in `data_gen/run_simple_experiment.py`; one of "local_isl", "local_tsl", "t5", "SIP" and one of "isl_canon", "isl_markov", "tsl_canon", "tsl_markov".
+* Cipher type: "monoalphabetic" or leave blank for no cipher. (There's also a "shift" mode we don't use in the paper.) Cipher key: arbitrary integer used to seed the RNG.
+* You can also use `train_min`, `train_max`, `n_test`, `n_samples` to control how many trials are run and what set sizes are used. See `run_simple_experiment.py` for details.
+
+The experiment will produce a tsv of results and a `.pkl` file which contains all the input and output instances for each run (one pickle per run).
+
+## Plots and tables
+
+Our plotting tool is `plot_amp.py`, which can be run as follows:
+
+```
+python plot_amp.py [data/eval] -e [condition] -m SIP-TSL -m SIP-ISL -m SIP-FST -m t5 --metric inform --multi [overlay] -t all -c remove -o [filename].svg
 ```
 
-Or on a few-shot text editing task:
-```shell
-export seed=1234
-export num_train=5
-export path="data/pbe_strings_track_tsv/name-combine-4-long.sl.tsv" 
-python config_evaluator.py configs/finetune/text_editing/sip-d4.jsonnet
-```
+* *data/eval* is the directory in which experiment logs are located.
+* *condition* is the experiment code (e.g. *turkish*, *harmony*, etc); see the help message for a full list.
+* The --multi flag controls how information is divided into plots: either grouped by task, grouped by model, or fully faceted by task/model.
+* The -c flag controls how ciphered runs are displayed: removed from the plot, aggregated with non-cipher runs and plotted as a single series, or faceted.
+* The model, task and metric flags can be used to select different data series to show.
 
-## Reproduction of pre-training
+The `tabular_output.py` tool makes Latex tables showing the median and 95% confidence of the scores. It takes the same flags as the plotter.
 
-To generate the pre-training data, go to the main directory and call
-```
-python -m sip.data_gen.gen_pretrain
-```
-this will create the files `data/pretrain/[train|dev|test|easy_dev]_s4.jsonl`. Each line is a json object that encodes
-a pre-training instance: an input/output string pair and a list of FST transitions. Each transition has the format (p, symbol read, symbol written, q, is q final) where p is the state we're coming from and q is the state we're going to.
-epsilon is encoded as the value 20 (see sip.data_gen.utils).
+You can print errors with `nl_errors.py [directory with the data] [model run directory]` and `synth_errors.py [model run directory]`. 
 
-The easy_dev files contain instances with FSTs seen during training but unseen strings, whereas the dev and test files contain unseen FSTs.
+An example of how to read the output: The first block shows errors from the 100-item training set size for which the gold input and output differ ("alter"). There are 5026 errors of this type across all runs, and in 4723 of these, the proposed output is identical to the input ("don't change"), that is, the change is underapplied. The tuples shown are (input, gold output, prediction). For instance, the first tuple shows the model failing to devoice the final z of "gantz".
 
-To pre-train the model, run:
-```
-python config_evaluator.py configs/pretrain_non_hub/pretrain_SIP_d4.jsonnet
-```
+The next block shows errors where the gold input and output are identical ("copy"). There are 2072 of these and in each case, the proposed output is not identical to the input (since otherwise it would not be an error!). These show various kinds of more or less unprincipled alterations, eg. Schreck to Schre[g].
 
-To fine-tune a model that was pre-trained from a configuration in `configs/pretrain_non_hub/`, you will need to use one of the configs
-in `configs/finetune_non_hub/`.
-Unfortunately, the models produced in this way are currently not easy to upload to the HuggingFace hub, and we're hoping to provide a conversion script soon.
-
-# Citation
 ```
-@inproceedings{lindemann-etal-2024-sip,
-    title = "SIP: Injecting a Structural Inductive Bias into a Seq2Seq Model by Simulation",
-    author = "Lindemann, Matthias  and
-      Koller, Alexander  and
-      Titov, Ivan",
-    booktitle = "Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics",
-    month = aug,
-    year = "2024",
-    address = "Bangkok, Thailand",
-    publisher = "Association for Computational Linguistics",
-    url = "https://arxiv.org/abs/2310.00796",
-}
+python nl_errors.py data/eval/belth/german-syll/ data/eval/belth/german-syll/nl_german-syll_local_tsl_tsl_canon/
+errors of alter at 100 (5026 of which 4723 don't change)
+	 ('gantz.', 'gants.', 'gantz.')
+	 ('ɔb.', 'ɔp.', 'ɔb.')
+	 ('tsug.', 'tsuk.', 'tsug.')
+	 ('kʊrtz.', 'kʊrts.', 'kʊrtz.')
+	 ('vɛg.', 'vɛk.', 'vɛg.')
+	 ('ab.', 'ap.', 'ab.')
+	 ('flug.tsɔyg.', 'fluk.tsɔyk.', 'flug.tsɔyg.')
+	 ('gɛlb.', 'gɛlp.', 'gɛlb.')
+	 ('gɛlb.', 'gɛlp.', 'gɛlb.')
+	 ('gɘ.nug.', 'gɘ.nuk.', 'gɘ.nug.')
+	 ('gib.', 'gip.', 'gib.')
+	 ('mag.', 'mak.', 'mag.')
+	 ('platz.', 'plats.', 'platz.')
+	 ('hʊb.ʃrau.bɘr.', 'hʊp.ʃrau.bɘr.', 'hʊb.ʃrau.bɘr.')
+	 ('dɛs.halb.', 'dɛs.halp.', 'dɛs.halb.')
+	 ('flug.ha.fɘn.', 'fluk.ha.fɘn.', 'flug.ha.fɘn.')
+	 ('hab.', 'hap.', 'hab.')
+	 ('tag.', 'tak.', 'tag.')
+	 ('ʃvartz.', 'ʃvarts.', 'ʃvartz.')
+	 ('ʃvartz.', 'ʃvarts.', 'ʃvartz.')
+
+errors of copy at 100 (2072 of which 0 don't change)
+	 ('mø.rɘ.', 'mø.rɘ.', 'mŸ.rɘ.')
+	 ('ʃrɛk.', 'ʃrɛk.', 'ʃrɛg.')
+	 ('tɛ.di.bɛ.rɘn.', 'tɛ.di.bɛ.rɘn.', 'tɛ.ti.bɛ.rɘn.')
+	 ('gɘ.løst.', 'gɘ.løst.', 'gɘ.list.')
+	 ('mø.vɘ.', 'mø.vɘ.', 'mŸ.vɘ.')
+	 ('auf.gɘ.løst.', 'auf.gɘ.løst.', 'auf.gɘ.list.')
+	 ('mys.te.ri.øs.', 'mys.te.ri.øs.', 'mys.te.ri.is.')
+	 ('aus.gɘ.løst.', 'aus.gɘ.løst.', 'aus.gɘ.list.')
+	 ('ʃtek.', 'ʃtek.', 'ʃteg.')
+	 ('ʃøn.', 'ʃøn.', 'ʃon.')
+	 ('gɘ.hørt.', 'gɘ.hørt.', 'gɘ.hirt.')
+	 ('ʃø.nɘ.', 'ʃø.nɘ.', 'ʃo.nɘ.')
+	 ('ʃø.nɘ.', 'ʃø.nɘ.', 'ʃo.nɘ.')
+	 ('hørt.', 'hørt.', 'hirt.')
+	 ('ʃø.nɘs.', 'ʃø.nɘs.', 'ʃo.nɘs.')
+	 ('ʃø.nɘs.', 'ʃø.nɘs.', 'ʃo.nɘs.')
+	 ('lø.vɘ.', 'lø.vɘ.', 'li.vɘ.')
+	 ('hø.rɘn.', 'hø.rɘn.', 'hi.rɘn.')
+	 ('ʃø.nɘn.', 'ʃø.nɘn.', 'ʃo.nɘn.')
+	 ('ʃø.nɘr.', 'ʃø.nɘr.', 'ʃo.nɘr.')
 ```
