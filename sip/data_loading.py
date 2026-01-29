@@ -54,13 +54,44 @@ def prepare_task_dataset(path:str, tokenizer: AutoTokenizer, batch_size: int, ra
     dataset = dataset.map(mapper, batched=False, remove_columns=["input", "output"])
     return DataLoader(dataset, collate_fn=DataCollatorForSeq2Seq(tokenizer), batch_sampler=ts)
 
+def batch_list(lst, kk):
+    for ii in range(0, len(lst), kk):
+        yield lst[ii:ii+kk]
 
-def fst_to_vector(fst_tokenizer, num_states, fst: List[Tuple[int, str, str, int]], fst_format=None) -> np.array:
+def fst_to_vector(fst_tokenizer, num_states, fst: List[Tuple[int, str, str, int]], tier=None, fst_format=None) -> np.array:
     if fst_format == None:
         assert len(fst[0]) == 4 or len(fst[0]) == 5
 
-    fst_rep = np.zeros((len(fst), len(fst[0])), dtype=np.int64)
+    begin_ind = 0
+    #don't write the tier for canon machines, since we'll use explicit transitions to skip all the characters we don't like
+    if fst_format == "tsl_markov":
+        #if no tier but we're doing tier-based training, add one row of blanks
+        if tier == None:
+            fst_rep = np.zeros((len(fst) + 1, len(fst[0])), dtype=np.int64)
+            punc = fst_tokenizer("_")["input_ids"][0]
+            fst_rep[0, :] = punc
+            begin_ind = 1
+
+        else:
+            rows = int(np.ceil(len(tier) / 3))
+            punc = fst_tokenizer("_")["input_ids"][0]
+            fst_rep = np.zeros((len(fst) + rows, len(fst[0])), dtype=np.int64)
+            for j, t in enumerate(batch_list(tier, 3)):
+                i_encoded = fst_tokenizer(t)["input_ids"]
+                fst_rep[j, :] = punc
+                for k, c in enumerate(t):
+                    fst_rep[j, k + 1] = i_encoded[k]
+
+            begin_ind = rows
+    else:
+        fst_rep = np.zeros((len(fst), len(fst[0])), dtype=np.int64)
+
+    #use the regular ISL loaders for TSL machines after writing the tier
+    fst_format = fst_format.replace("tsl", "isl")
+        
     for j, f in enumerate(fst):
+        j += begin_ind
+
         if fst_format == None:
             s, i, o, sp = f[:4]
             assert s < num_states-1 #last state is reserved for padding
@@ -193,7 +224,11 @@ def load_fst_jsonl(path: str, tokenizer: AutoTokenizer, fst_tokenizer: Union[str
                 if "task_id" in d:
                     data["task_ids"].append(d["task_id"])
 
-                data["fst_rep"].append(fst_to_vector(fst_tokenizer, num_states, map_f(d["FST"]), fst_format=fst_format))
+                if "tier" in d:
+                    tier = d["tier"]
+                else:
+                    tier = None
+                data["fst_rep"].append(fst_to_vector(fst_tokenizer, num_states, map_f(d["FST"]), tier=tier, fst_format=fst_format))
 
                 i += 1
                 if max_n is not None and i > max_n:

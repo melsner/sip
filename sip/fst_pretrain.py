@@ -69,9 +69,10 @@ class SimpleFSTEmbedder(MachineEmbedder):
         else:
             if self.fst_format == None:
                 self.input_layer = torch.nn.Linear(state_embedding_dim * 2 + token_embedding_dim * 2 + final_state_embedding_dim, self.trafo_embedding_dim)
-            elif self.fst_format == "isl_canon":
+            elif self.fst_format in ["isl_canon", "tsl_canon"]:
+                #NB: tsl formats have extra blocks at the front of the embedding but are not otherwise different
                 self.input_layer = torch.nn.Linear(state_embedding_dim * 2 + token_embedding_dim * 3, self.trafo_embedding_dim)
-            elif self.fst_format == "isl_markov":
+            elif self.fst_format in ["isl_markov", "tsl_markov"]:
                 self.input_layer = torch.nn.Linear(token_embedding_dim * 4, self.trafo_embedding_dim)
             else:
                 assert(0), f"bad fst format {self.fst_format}"
@@ -85,7 +86,10 @@ class SimpleFSTEmbedder(MachineEmbedder):
         fst_rep = kwargs["fst_rep"] #shape (batch, transition count, 4 or 5)
         del kwargs["fst_rep"]
 
-        if self.fst_format == None:
+        #tsl formats have the same embedding shapes as isl formats, but with the tier info in blocks at the beginning
+        fst_format = self.fst_format.replace("tsl", "isl")
+        
+        if fst_format == None:
             from_rep = self.state_embeddings(fst_rep[:, :, 0]) #shape (batch, transition count, embed dim)
             to_rep = self.state_embeddings(fst_rep[:, :, 3]) #shape (batch, transition count, embed dim)
             io_rep = self.token_embeddings(fst_rep[:, :, 1:3]) #shape (batch, transition count, 2, embed dim)
@@ -97,7 +101,7 @@ class SimpleFSTEmbedder(MachineEmbedder):
                                                dim=2)  # shape (batch, transition, 2* state embed dim + 2 * token embed dim)
             else:
                 flat_total_fst_rep = torch.cat([from_rep, to_rep, io_rep], dim=2) #shape (batch, transition, 2* state embed dim + 2 * token embed dim)
-        elif self.fst_format == "isl_canon":
+        elif fst_format == "isl_canon":
             # print("formatting fst")
             # print(fst_rep)
             # print("max", torch.max(fst_rep, dim=0))
@@ -108,7 +112,7 @@ class SimpleFSTEmbedder(MachineEmbedder):
             io_rep = torch.flatten(io_rep, start_dim=2)
 
             flat_total_fst_rep = torch.cat([from_rep, to_rep, io_rep], dim=2) #shape (batch, transition, 2* state embed dim + 3 * token embed dim)
-        elif self.fst_format == "isl_markov":
+        elif fst_format == "isl_markov":
             from_rep = self.token_embeddings(fst_rep[:, :, 0]) #shape (batch, transition count, embed dim)
             io_rep = self.token_embeddings(fst_rep[:, :, 1:4]) #shape (batch, transition count, 3, embed dim)
             io_rep = torch.flatten(io_rep, start_dim=2)
