@@ -36,7 +36,7 @@ vocab.remove("(") #so we can assume this character is always the first of a port
 
 if __name__ == "__main__":
     # edit this line to set the representation to "markov" or "canonical"
-    REPRESENTATION = "markov"
+    REPRESENTATION = "canonical"
 
     COLLECTION = f"data/pretrain_2isl_{REPRESENTATION}"
     os.makedirs(COLLECTION, exist_ok=True)
