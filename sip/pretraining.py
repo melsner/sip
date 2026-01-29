@@ -175,13 +175,13 @@ def pretrain(model,
 
         # Easy Validation
         if easy_validation_data_loader is not None:
-            acc, edit, per = evaluate_on(model, tokenizer, logger.progress_bar(easy_validation_data_loader))
+            acc, edit, per, binmets = evaluate_on(model, tokenizer, logger.progress_bar(easy_validation_data_loader))
             logger.log_metrics("pretrain_easy_dev", {"acc": acc, "edit_dist": edit, "per": per})
             print("Easy validation", {"acc": acc, "edit_dist": edit, "per": per})
 
         #Normal validation
         if validation_data_loader is not None:
-            acc, edit, per = evaluate_on(model, tokenizer, logger.progress_bar(validation_data_loader))
+            acc, edit, per, binmets = evaluate_on(model, tokenizer, logger.progress_bar(validation_data_loader))
             logger.log_metrics("pretrain_dev", {"acc": acc, "edit_dist": edit, "per": per})
             print("Validation", {"acc": acc, "edit_dist": edit, "per": per})
 
@@ -193,7 +193,7 @@ def pretrain(model,
         model.deparallelize()
 
     if test_data_loader is not None:
-        acc, edit, per = evaluate_on(model, tokenizer, logger.progress_bar(test_data_loader))
+        acc, edit, per, binmets = evaluate_on(model, tokenizer, logger.progress_bar(test_data_loader))
         logger.log_metrics("pretrain_test", {"acc": acc, "edit_dist": edit, "per": per})
         print("Validation", {"acc": acc, "edit_dist": edit, "per": per})
 
