@@ -37,7 +37,7 @@ each states is labeled with the previously-seen character.
 
 To create natural language data: `python -u -m sip.data_gen.create_belth_local_dsets --language [german] --samples [10] --sizes [100,200,300,400]`
 
-The datasets will be sampled automatically from the vocabulary files in (github.com/cbelth/PLP) and (github.com/cbelth/Learning-Based-Tiers).
+The datasets will be sampled automatically from the vocabulary files in [github.com/cbelth/PLP](github.com/cbelth/PLP) and [github.com/cbelth/Learning-Based-Tiers](github.com/cbelth/Learning-Based-Tiers).
 
 ## Pretraining SIP models
 
@@ -64,8 +64,8 @@ python plot_amp.py [data/eval] -e [condition] -m SIP-TSL -m SIP-ISL -m SIP-FST -
 
 * *data/eval* is the directory in which experiment logs are located.
 * *condition* is the experiment code (e.g. *turkish*, *harmony*, etc); see the help message for a full list.
-* The --multi flag controls how information is divided into plots: either grouped by task, grouped by model, or fully faceted by task/model.
-* The -c flag controls how ciphered runs are displayed: removed from the plot, aggregated with non-cipher runs and plotted as a single series, or faceted.
+* The *--multi* flag controls how information is divided into plots: either grouped by task, grouped by model, or fully faceted by task/model.
+* The *-c* flag controls how ciphered runs are displayed: removed from the plot, aggregated with non-cipher runs and plotted as a single series, or faceted.
 * The model, task and metric flags can be used to select different data series to show.
 
 The `tabular_output.py` tool makes Latex tables showing the median and 95% confidence of the scores. It takes the same flags as the plotter.
