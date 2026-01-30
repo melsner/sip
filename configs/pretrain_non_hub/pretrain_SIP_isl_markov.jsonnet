@@ -2,10 +2,10 @@ local num_states = 15;
 
 local fst_tokenizer_path = "unicode_char_tokenizer_ipa.json";
 
-local train_data_path = "data/pretrain_2isl/train_pretrain_s4_canonical.jsonl";
-local dev_data_path = "data/pretrain_2isl/dev_pretrain_s4_canonical.jsonl";
-local easy_dev_data_path = "data/pretrain_2isl/easy_dev_pretrain_s4_canonical.jsonl";
-local test_data_path = "data/pretrain_2isl/test_pretrain_s4_canonical.jsonl";
+local train_data_path = "data/pretrain_2isl_markov/train_pretrain_s4_markov.jsonl";
+local dev_data_path = "data/pretrain_2isl_markov/dev_pretrain_s4_markov.jsonl";
+local easy_dev_data_path = "data/pretrain_2isl_markov/easy_dev_pretrain_s4_markov.jsonl";
+local test_data_path = "data/pretrain_2isl_markov/test_pretrain_s4_markov.jsonl";
 
 
 local tokenizer =   {
@@ -20,7 +20,7 @@ local data_loader(fname, batch_size) = {
         "tokenizer": tokenizer,
         "num_states": num_states,
         "fst_tokenizer": fst_tokenizer_path,
-        "fst_format": "isl_canon",
+        "fst_format": "isl_markov",
 } ;
 
 
@@ -33,7 +33,7 @@ local data_loader(fname, batch_size) = {
   "steps": [
 
    {
-    "name": "pretrain_2isl_canon",
+    "name": "pretrain_2isl_markov",
     "f": "pretrain",
     "model": {
         "f": "create_fst_pretraining_model",
@@ -45,7 +45,7 @@ local data_loader(fname, batch_size) = {
                 "token_embedding_dim": 256,
                 "final_state_embedding_dim": 16,
                 "fst_tokenizer": fst_tokenizer_path,
-                "fst_format": "isl_canon",
+                "fst_format": "isl_markov",
         },
 
         "model": {
@@ -69,7 +69,7 @@ local data_loader(fname, batch_size) = {
 
     "num_accumulation_steps": 3,
 
-    "save_dir": "models/w_fsts_pretrain_s4_32_isl_canon",
+    "save_dir": "models/w_fsts_pretrain_s4_32_markov",
 
     "train_data_path": train_data_path
 
