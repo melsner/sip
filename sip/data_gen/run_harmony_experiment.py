@@ -32,6 +32,7 @@ if __name__ == "__main__":
         patterns = [
             f"{trigger}{char}",
             f"{trigger}.{char}",
+            f"{trigger}..{char}",
             f"{trigger}.*{char}",
             f"{char}"]
         for pattern in patterns:
@@ -52,10 +53,13 @@ if __name__ == "__main__":
     def run_fn_s2(ss): #progressive change skipping a single position
         return re.sub("a(.)e", "a\\1A", ss)
 
-    def run_fn_s3(ss): #progressive change skipping up to a single position
+    def run_fn_s3(ss): #progressive change skipping exactly two positions
+        return re.sub("a(..)e", "a\\1A", ss)
+    
+    def run_fn_s4(ss): #progressive change skipping up to a single position
         return re.sub("a(.)?e", "a\\1A", ss)
 
-    def run_fn_s4(ss): #progressive harmony
+    def run_fn_s5(ss): #progressive harmony
         sOld = ss
         sNew = re.sub("a(.*)e", "a\\1A", ss)
         while sNew != sOld:
@@ -64,27 +68,34 @@ if __name__ == "__main__":
         return sNew
 
     process = args.process
-    assert(0 < process <= 4)
-    fns = [run_fn_s1, run_fn_s2, run_fn_s3, run_fn_s4]
+    assert(0 < process <= 5)
+    fns = [run_fn_s1, run_fn_s2, run_fn_s3, run_fn_s4, run_fn_s5]
     fn = fns[process - 1]
     print("Running for process", process - 1)
 
-    train, test = gen_balanced_problem(catWords, fn, 4, 2)
-    for pair in train:
-        print(pair)
-    print()
-    for pair in test:
-        print(pair)
-    print("-----")
+    # train, test = gen_balanced_problem(catWords, fn, 4, 2)
+    # for pair in train:
+    #     print(pair)
+    # print()
+    # for pair in test:
+    #     print(pair)
+    # print("-----")
 
+    # assert(0)
+    
     model = args.model
     fst_format = args.fst_format
 
-    run_name = f"harmony_{process}_{model}_{fst_format}"
+    run_name = f"rebalance_harmony_{process}_{model}_{fst_format}"
+    ciph = None
+    if args.cipher_type is not None:
+        run_name += f"_ciph_{args.cipher_type}_{args.cipher_key}"
+        ciph = Cipher(args.cipher_key, args.cipher_type, spanish_alphabet)
+
     os.makedirs(f"data/eval/{run_name}", exist_ok=True)
     with open(f"data/eval/{run_name}/scores.tsv", "w") as sfh:
         fields = ["num_train", "sample", "step", "acc", "edit_dist", "per",
-                  "acc_avg_10", "edit_dist_avg_10", "per_avg_10"]
+                  "acc_avg_1", "edit_dist_avg_1", "per_avg_1", "tpr", "tnr", "fpr", "inform"]
         scoreWriter = csv.DictWriter(sfh, fieldnames=fields, dialect="excel-tab")
         scoreWriter.writeheader()
 
@@ -92,4 +103,4 @@ if __name__ == "__main__":
 
     for size in range(args.train_min, args.train_max, args.train_incr):
         run_experiment(catWords, fn, run_name, size, args.n_test, n_trials=args.n_samples,
-                       load_model_function=load_model)
+                       load_model_function=load_model, cipher=ciph)
