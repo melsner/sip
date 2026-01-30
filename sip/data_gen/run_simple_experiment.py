@@ -3,6 +3,7 @@ import csv
 import itertools
 import numpy as np
 import argparse
+import pickle
 
 from sip.data_gen.gen_isl import *
 from sip.data_gen.isl_sampling_utilities import *
@@ -27,14 +28,16 @@ class NotEnoughExamplesError(Exception):
 
 def parse_experiment_arguments(name):
     parser = argparse.ArgumentParser(prog=name)
-    parser.add_argument("--model", choices=["local_isl", "t5", "SIP"])
-    parser.add_argument("--fst_format", default=None, choices=["isl_canon", "isl_markov"])
+    parser.add_argument("--model", choices=["local_isl", "local_tsl", "t5", "SIP"])
+    parser.add_argument("--fst_format", default=None, choices=["isl_canon", "isl_markov", "tsl_canon", "tsl_markov"])
     parser.add_argument("--process", type=int)
     parser.add_argument("--train_min", default=2, type=int)
     parser.add_argument("--train_max", default=40, type=int)
     parser.add_argument("--train_incr", default=2, type=int)
     parser.add_argument("--n_test", default=8, type=int)
     parser.add_argument("--n_samples", default=16, type=int)
+    parser.add_argument("--cipher_key", default=0, type=int)
+    parser.add_argument("--cipher_type", default=None, choices=["monoalphabetic", "shift"])
 
     return parser.parse_args()
 
@@ -77,11 +80,12 @@ def train_test_split(changed, unchanged, n_test):
     return train, test
 
 class ExperimentLogger:
-    def __init__(self, writer, num_train, sample):
+    def __init__(self, writer, num_train, sample, fh=None):
         self.writer = writer
         self.step = itertools.count()
         self.num_train = num_train
         self.sample = sample
+        self.fh = fh
 
     def progress_bar(self, generator):
         for item in generator:
@@ -94,6 +98,8 @@ class ExperimentLogger:
         fields["step"] = next(self.step)
         fields["num_train"] = self.num_train
         self.writer.writerow(fields)
+        if self.fh:
+            self.fh.flush()
 
 def gen_balanced_problem(cat_words, process, num_train, num_test):
     train = []
@@ -110,12 +116,18 @@ def gen_balanced_problem(cat_words, process, num_train, num_test):
     return train, test
 
 def get_model_loader(mode, fst_format=None):
-    if mode == "local_isl":
-        assert(fst_format in ["isl_canon", "isl_markov"])
-        if fst_format == "isl_canon":
-            model = "models/w_fsts_pretrain_s4_32"
+    if mode in ["local_isl", "local_tsl"]:
+        assert(fst_format in ["isl_canon", "isl_markov", "tsl_canon", "tsl_markov"])
+        if mode == "local_tsl":
+            if fst_format == "tsl_markov":
+                model = "models/w_fsts_pretrain_s4_32_tsl_moretsl_markov"
+            else:
+                model = "models/w_fsts_pretrain_s4_32_tsl_moretsl_canon"
         else:
-            model = "models/w_fsts_pretrain_s4_32_markov"
+            if fst_format == "isl_canon":
+                model = "models/w_fsts_pretrain_s4_32_isl_canon"
+            else:
+                model = "models/w_fsts_pretrain_s4_32_isl_markov"
 
         tokenizer = transformers.AutoTokenizer.from_pretrained("google/byt5-small")
 
@@ -144,49 +156,119 @@ def get_model_loader(mode, fst_format=None):
 
     return load_model
 
-def run_experiment(words, process, run, num_train, num_test, n_trials, load_model_function):
+class Cipher:
+    def __init__(self, key, mode, alphabet):
+        self.key = key
+        self.mode = mode
+        self.alphabet = alphabet
+
+        self.minC = np.min([ord(ci) for ci in self.alphabet])
+        self.maxC = np.max([ord(ci) for ci in self.alphabet])
+
+        self.mapping = {}
+        if mode == "shift":
+            for pi in self.alphabet:
+                self.mapping[pi] = chr(
+                    ((ord(pi) + self.key - minC) % (maxC - minC)) + minC)
+        elif mode == "monoalphabetic":
+            rgen = np.random.default_rng(seed=self.key)
+            perm = list(self.alphabet)
+            rgen.shuffle(perm)
+            for pi, ci in zip(self.alphabet, perm):
+                self.mapping[pi] = ci
+        else:
+            assert(0), "unknown cipher mode"
+
+    def encipher(self, data):
+        def enc(string):
+            delim = False
+            if string.endswith(chr(SYMBOL_RDELIM)):
+                string = string[:-1]
+                delim = True
+
+            ciphered = [self.mapping[ci] for ci in string]
+
+            if delim:
+                ciphered.append(chr(SYMBOL_RDELIM))
+
+            return "".join(ciphered)
+
+        d0 = [enc(xx[0]) for xx in data]
+        d1 = [enc(xx[1]) for xx in data]
+        print("enciphered", data[:5], "=>")
+        print(list(zip(d0, d1))[:5])
+        assert(len(d0) == len(d1))
+        return list(zip(d0, d1))
+
+def run_experiment(words, process, run, num_train, num_test, n_trials, load_model_function, cipher=None):
     os.makedirs(f"data/eval/{run}", exist_ok=True)
     with open(f"data/eval/{run}/scores.tsv", "a") as sfh:
         fields = ["num_train", "sample", "step", "acc", "edit_dist", "per",
-                  "acc_avg_10", "edit_dist_avg_10", "per_avg_10", "tpr", "tnr", "fpr", "inform"]
+                  "acc_avg_1", "edit_dist_avg_1", "per_avg_1", "tpr", "tnr", "fpr", "inform"]
         scoreWriter = csv.DictWriter(sfh, fieldnames=fields, dialect="excel-tab")
+
+        with open(f"data/eval/{run}/data.pkl", "ab") as dfh:
         
-        for ii in range(n_trials):
-            #changed, unchanged = gen_phonology_problem(words, process, balance=True, n_exes=num_train + num_test)
-            #train, test = train_test_split(changed, unchanged, num_test)
-            train, test = gen_balanced_problem(words, process, num_train, num_test)
-            train = [(inp + chr(SYMBOL_RDELIM), outp) for (inp, outp) in train]
-            test = [(inp + chr(SYMBOL_RDELIM), outp) for (inp, outp) in test]
-            write_tsv(f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_train.tsv", train)
-            write_tsv(f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_val.tsv", test)
-            predFile =  f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_pred.tsv"
+            for ii in range(n_trials):
+                #changed, unchanged = gen_phonology_problem(words, process, balance=True, n_exes=num_train + num_test)
+                #train, test = train_test_split(changed, unchanged, num_test)
+                train, test = gen_balanced_problem(words, process, num_train, num_test)
+                train = [(inp + chr(SYMBOL_RDELIM), outp) for (inp, outp) in train]
+                test = [(inp + chr(SYMBOL_RDELIM), outp) for (inp, outp) in test]
 
-            logger = ExperimentLogger(scoreWriter, num_train=num_train, sample=ii)
+                if cipher != None:
+                    train = cipher.encipher(train)
+                    test = cipher.encipher(test)
+                
+                trainFile = f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_train.tsv"
+                testFile = f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_val.tsv"
+                predFile =  f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_pred.tsv"
+                write_tsv(trainFile, train)
+                write_tsv(testFile, test)
+
+                logger = ExperimentLogger(scoreWriter, num_train=num_train, sample=ii)
             
-            #copied from sip_isl_canon.jsonnet
-            tokenizer = transformers.AutoTokenizer.from_pretrained("google/byt5-small")
-            train_loader = prepare_task_dataset(batch_size=32,
-                                                path=f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_train.tsv",
-                                                tokenizer=tokenizer)
-            val_loader = prepare_task_dataset(batch_size=32,
-                                                path=f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_val.tsv",
-                                                tokenizer=tokenizer)
-            model = load_model_function()
-            finetune_model(model=model,
-                           tokenizer=tokenizer,
-                           train_data_loader=train_loader,
-                           validation_data_loader=val_loader,
-                           optimizer=Lazy({"lr":5e-4}, torch.optim.Adam),
-                           num_epochs=50,
-                           optimizer_groups=[
-                               [".*prefix_embedding.*", {"lr": 1.0}],
-                               [".*", {"lr": 3e-4}],
-                           ],
-                           grad_scale=1.0,
-                           logger=logger,
-                           eval_predictions_file=predFile,
-                           )
+                #copied from sip_isl_canon.jsonnet
+                tokenizer = transformers.AutoTokenizer.from_pretrained("google/byt5-small")
+                train_loader = prepare_task_dataset(batch_size=32,
+                                                    path=f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_train.tsv",
+                                                    tokenizer=tokenizer)
+                val_loader = prepare_task_dataset(batch_size=32,
+                                                  path=f"data/eval/{run}/i_{ii}_t_{num_train}_v_{num_test}_val.tsv",
+                                                  tokenizer=tokenizer)
+                model = load_model_function()
+                finetune_model(model=model,
+                               tokenizer=tokenizer,
+                               train_data_loader=train_loader,
+                               validation_data_loader=val_loader,
+                               optimizer=Lazy({"lr":5e-4}, torch.optim.Adam),
+                               num_epochs=50,
+                               optimizer_groups=[
+                                   [".*prefix_embedding.*", {"lr": 1.0}],
+                                   [".*", {"lr": 3e-4}],
+                               ],
+                               grad_scale=1.0,
+                               logger=logger,
+                               eval_predictions_file=predFile,
+                               eval_only_last_epochs=True,
+                               moving_avg_steps=1,
+                               )
 
+                #copy the dataset to an archive
+                with open(predFile) as ipf:
+                    predict = np.array(ipf.readlines())
+                    
+                data = {
+                    "train" : train,
+                    "test" : test,
+                    "predict" : predict
+                    }
+                pickle.dump(data, dfh)
+
+                #clean up the working files
+                for fp in [trainFile, testFile, predFile]:
+                    os.unlink(fp)
+            
 if __name__ == "__main__":
     #implement a simple assimilation pattern
     toy_vocab = ["inner", "inmer", "inter"]
@@ -249,7 +331,7 @@ if __name__ == "__main__":
     run_name = "devoice_d"
     with open(f"data/eval/{run_name}/scores.tsv", "w") as sfh:
         fields = ["num_train", "sample", "step", "acc", "edit_dist", "per",
-                  "acc_avg_10", "edit_dist_avg_10", "per_avg_10"]
+                  "acc_avg_1", "edit_dist_avg_1", "per_avg_1"]
         scoreWriter = csv.DictWriter(sfh, fieldnames=fields, dialect="excel-tab")
         scoreWriter.writeheader()
         
