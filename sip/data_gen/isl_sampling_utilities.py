@@ -19,12 +19,12 @@ from sip.data_gen.gen_isl import select_factors, make_2isl_transducer, NotKISLEr
 from sip.data_gen.utils import gen_pair, one_step, FSTCollection, random_subset, replace_arc, fst_to_json
 
 def postprocess_for_sampling(fst: pynini.Fst):
-    fst = replace_star_transitions(fst)
-    if fst.state_names != None:
-        fst = replace_star_state(fst)
+    fst1 = replace_star_transitions(fst)
+    if fst1.state_names != None:
+        fst1 = replace_star_state(fst1)
 
     #check that the star replacement hasn't hosed the output charset
-    osyms = fst.fst.output_symbols()
+    osyms = fst1.fst.output_symbols()
     for ii in range(osyms.num_symbols()):
         key = osyms.get_nth_key(ii)
         val = osyms.find(key)
@@ -32,6 +32,42 @@ def postprocess_for_sampling(fst: pynini.Fst):
             val = ast.literal_eval(val)
             assert(len(val) <= 2)
 
+    fst1.tier = fst.tier
+    return fst1
+
+def compose_with_tier_filter(fst):
+    isyms = fst.fst.input_symbols()
+    tier = fst.tier
+    #.*T.*T.*
+    tier_filter = pynini.Fst()
+    tier_filter.set_input_symbols(isyms)
+    tier_filter.set_output_symbols(isyms)
+    tier_filter.add_states(6)
+
+    def add_star(state):
+        for char in range(isyms.num_symbols()):
+            tier_filter.add_arc(state,
+                                pynini.Arc(char, char, 0, state))
+            tier_filter.add_arc(state,
+                                pynini.Arc(char, char, 0, state + 1))
+    def add_t(state):
+        for char in tier:
+            tier_filter.add_arc(state,
+                                pynini.Arc(isyms.find(char),
+                                           isyms.find(char), 0, state + 1))
+
+    add_star(0)
+    add_t(1)
+    add_star(2)
+    add_t(3)
+    add_star(4)
+
+    tier_filter.set_start(0)
+    tier_filter.set_final(5)
+
+    tier_filter.arcsort("olabel")
+    comp = pynini.compose(tier_filter, fst.fst)
+    fst.fst = comp
     return fst
 
 def apply_fst(fst, string):
@@ -47,7 +83,7 @@ def apply_fst(fst, string):
     result = normalize_string(comp.string(out_sym), delimiter="")
     return result
 
-def fst_to_json(fst: pynini.Fst):
+def fst_to_json(fst: pynini.Fst, tsl_tier_only=True):
     s = []
     def in_to_str(label, syms):
         if label == 0:
@@ -99,11 +135,16 @@ def fst_to_json(fst: pynini.Fst):
     state_names = fst.state_names
     fst = fst.fst
     assert fst.start() == 0
-
+    
     for state in fst.states():
         for arc in fst.arcs(state):
             i1 = in_to_str(arc.ilabel, fst.input_symbols())
             o1, o2 = out_to_str(arc.olabel, fst.output_symbols())
+
+            if state == arc.nextstate and tsl_tier_only:
+                # do not jsonify the loops which you get from tsl machines
+                continue
+
             if state_names != None:
                 sn_i = state_names[state]
                 sn_o = state_names[arc.nextstate]
